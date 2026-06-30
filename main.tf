@@ -1,5 +1,7 @@
+// ----------- VPC ----------------
+
 // Create VPC
-resource "aws_vpc" "main-vpc" {
+resource "aws_vpc" "three-tier-vpc" {
   cidr_block           = var.vpc_cidr
   enable_dns_hostnames = true
   enable_dns_support   = true
@@ -9,119 +11,121 @@ resource "aws_vpc" "main-vpc" {
   }
 }
 
-// Create internet gateway
-resource "aws_internet_gateway" "igw" {
-  vpc_id = aws_vpc.main.id
+// ------------- SUBNETS --------------
 
-  tags = {
-    Name = "main-igw"
-  }
-}
+//PUBLIC SUBNET FOR WEB TIER
+// Create public subnets for web tier
+data "aws_availability_zones" "az-1" {}
 
-// Create public subnets
-data "aws_availability_zones" "available" {}
+resource "aws_subnet" "public-subnet-web" {
+  count = length(var.public_subnets_web_cidr)
 
-resource "aws_subnet" "public-sub-web" {
-  count = length(var.public_subnets_web)
-
-  vpc_id                  = aws_vpc.main.id
-  cidr_block              = var.public_subnets_web[count.index]
-  availability_zone       = data.aws_availability_zones.available.names[count.index]
+  vpc_id                  = aws_vpc.three-tier-vpc.id
+  cidr_block              = var.public_subnets_web_cidr[count.index]
+  availability_zone       = data.aws_availability_zones.az-1.names[count.index]
   map_public_ip_on_launch = true
 
   tags = {
-    Name = "public-${count.index + 1}"
+    Name = "public-sub-web${count.index + 1}"
   }
 }
 
-// Create private subnets
-resource "aws_subnet" "private-sub-app" {
-  count = length(var.private_subnets_app)
+// PRIVATE SUBNET FOR APP TIER
+// Create private subnets for app tier
+resource "aws_subnet" "private-subnet-app" {
+  count = length(var.private_subnets_app_cidr)
 
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = var.private_subnets_app[count.index]
+  vpc_id            = aws_vpc.three-tier-vpc.id
+  cidr_block        = var.private_subnets_app_cidr[count.index]
   availability_zone = data.aws_availability_zones.available.names[count.index]
 
   tags = {
-    Name = "app-${count.index + 1}"
+    Name = "private-sub-app${count.index + 1}"
   }
 }
 
-// Create database subnet
+// PRIVATE SUBNET FOR DB TIER
+// Create private subnet for db tier
 resource "aws_subnet" "private-subnet-db" {
-  count = length(var.private_subnets_db)
+  count = length(var.private_subnets_db_cidr)
 
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = var.private_subnets_db[count.index]
+  vpc_id            = aws_vpc.three-tier-vpc.id
+  cidr_block        = var.private_subnets_db_cidr[count.index]
   availability_zone = data.aws_availability_zones.available.names[count.index]
 
   tags = {
-    Name = "db-${count.index + 1}"
+    Name = "private-subnet-db${count.index + 1}"
   }
 }
 
-// Create route tables
-resource "aws_route_table" "public-rt" {
-  vpc_id = aws_vpc.main.id
+// -------------- INTERNET GATEWAY ------------------
+// Create internet gateway
+resource "aws_internet_gateway" "three-tier-vpc-igw" {
+  vpc_id = aws_vpc.three-tier-vpc.id
+
+  tags = {
+    Name = "three-tier-vpc-igw"
+  }
 }
 
-resource "aws_route" "internet-gw-rt" {
-  route_table_id         = aws_route_table.public.id
-  destination_cidr_block = "0.0.0.0/0"
-  gateway_id             = aws_internet_gateway.igw.id
-}
-
-// Associate public subnet
-resource "aws_route_table_association" "public-sub-rt-ass" {
-  count = length(var.public_subnets_web)
-
-  subnet_id      = aws_subnet.public-sub-web[count.index].id
-  route_table_id = aws_route_table.public-rt.id
-}
+// ---------- NAT GATEWAY -------------
 
 // Create Elastic IP for NAT gateway
-resource "aws_eip" "nat" {
+resource "aws_eip" "nat-gw-eip" {
   domain = "vpc"
 }
 
 //Create NAT gateway
-resource "aws_nat_gateway" "nat" {
-  allocation_id = aws_eip.nat.id
+resource "aws_nat_gateway" "nat-gw" {
+  allocation_id = aws_eip.nat-gw-eip.id
   subnet_id     = aws_subnet.public[0].id
 
   depends_on = [
-    aws_internet_gateway.igw
+    aws_internet_gateway.three-tier-vpc-igw
   ]
 }
 
-// Create private route table
-resource "aws_route_table" "private-rt" {
-  vpc_id = aws_vpc.main.id
+// ----------- ROUTE TABLE & ROUTES ------------------
+
+// --------- PUBLIC ROUTE ---------------------
+// Create secondary route table
+resource "aws_route_table" "secondary-rt" {
+  vpc_id = aws_vpc.three-tier-vpc.id
 }
 
-resource "aws_route" "nat" {
-  route_table_id         = aws_route_table.private-rt.id
+// Add internet gateway route to the secondary route table
+resource "aws_route" "internet-gw-route" {
+  route_table_id         = aws_route_table.secondary-rt.id
   destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.nat.id
+  gateway_id             = aws_internet_gateway.three-tier-vpc-igw.id
+}
+
+// Associate web tier subnets with the secondary route table
+resource "aws_route_table_association" "web-private_subnets_app_cidr-ass" {
+  count = length(var.public_subnets_web_cidr)
+
+  subnet_id      = aws_subnet.public-subnet-web[count.index].id
+  route_table_id = aws_route_table.secondary-rt.id
+}
+
+// ------------ PRIVATE ROUTE ---------------
+// Create main route table
+resource "aws_route_table" "main-rt" {
+  vpc_id = aws_vpc.three-tier-vpc.id
+}
+
+// Add nat gateway route to the main route table
+resource "aws_route" "nat-gw-route" {
+  route_table_id         = aws_route_table.main-rt.id
+  destination_cidr_block = "0.0.0.0/0"
+  nat_gateway_id         = aws_nat_gateway.nat-gw.id
 }
 
 // Associate app subnets to the private route table above
-resource "aws_route_table_association" "private-app-rt-ass" {
-  count = length(var.private_subnets_app)
+resource "aws_route_table_association" "private-subnet-app-rt-ass" {
+  count = length(var.private_subnets_app_cidr)
 
-  subnet_id      = aws_subnet.p[count.index].id
-  route_table_id = aws_route_table.private.id
-}
-
-// Associate DB subnets
-resource "aws_route_table" "db" {
-  vpc_id = aws_vpc.main.id
-}
-
-resource "aws_route_table_association" "db" {
-  count = length(var.db_subnets)
-
-  subnet_id      = aws_subnet.db[count.index].id
-  route_table_id = aws_route_table.db.id
+  subnet_id      = aws_subnet.private-subnet-app[count.index].id
+  route_table_id = aws_route_table.main-rt.id
 }
 
