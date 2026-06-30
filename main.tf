@@ -1,5 +1,5 @@
 // Create VPC
-resource "aws_vpc" "main" {
+resource "aws_vpc" "main-vpc" {
   cidr_block           = var.vpc_cidr
   enable_dns_hostnames = true
   enable_dns_support   = true
@@ -21,11 +21,11 @@ resource "aws_internet_gateway" "igw" {
 // Create public subnets
 data "aws_availability_zones" "available" {}
 
-resource "aws_subnet" "public" {
-  count = length(var.public_subnets)
+resource "aws_subnet" "public-sub-web" {
+  count = length(var.public_subnets_web)
 
   vpc_id                  = aws_vpc.main.id
-  cidr_block              = var.public_subnets[count.index]
+  cidr_block              = var.public_subnets_web[count.index]
   availability_zone       = data.aws_availability_zones.available.names[count.index]
   map_public_ip_on_launch = true
 
@@ -34,12 +34,12 @@ resource "aws_subnet" "public" {
   }
 }
 
-// Create application subnet
-resource "aws_subnet" "app" {
-  count = length(var.app_subnets)
+// Create private subnets
+resource "aws_subnet" "private-sub-app" {
+  count = length(var.private_subnets_app)
 
   vpc_id            = aws_vpc.main.id
-  cidr_block        = var.app_subnets[count.index]
+  cidr_block        = var.private_subnets_app[count.index]
   availability_zone = data.aws_availability_zones.available.names[count.index]
 
   tags = {
@@ -48,11 +48,11 @@ resource "aws_subnet" "app" {
 }
 
 // Create database subnet
-resource "aws_subnet" "db" {
-  count = length(var.db_subnets)
+resource "aws_subnet" "private-subnet-db" {
+  count = length(var.private_subnets_db)
 
   vpc_id            = aws_vpc.main.id
-  cidr_block        = var.db_subnets[count.index]
+  cidr_block        = var.private_subnets_db[count.index]
   availability_zone = data.aws_availability_zones.available.names[count.index]
 
   tags = {
@@ -61,22 +61,22 @@ resource "aws_subnet" "db" {
 }
 
 // Create route tables
-resource "aws_route_table" "public" {
+resource "aws_route_table" "public-rt" {
   vpc_id = aws_vpc.main.id
 }
 
-resource "aws_route" "internet" {
+resource "aws_route" "internet-gw-rt" {
   route_table_id         = aws_route_table.public.id
   destination_cidr_block = "0.0.0.0/0"
   gateway_id             = aws_internet_gateway.igw.id
 }
 
-// Assoxiate public subnet
-resource "aws_route_table_association" "public" {
-  count = length(var.public_subnets)
+// Associate public subnet
+resource "aws_route_table_association" "public-sub-rt-ass" {
+  count = length(var.public_subnets_web)
 
-  subnet_id      = aws_subnet.public[count.index].id
-  route_table_id = aws_route_table.public.id
+  subnet_id      = aws_subnet.public-sub-web[count.index].id
+  route_table_id = aws_route_table.public-rt.id
 }
 
 // Create Elastic IP for NAT gateway
@@ -95,21 +95,21 @@ resource "aws_nat_gateway" "nat" {
 }
 
 // Create private route table
-resource "aws_route_table" "private" {
+resource "aws_route_table" "private-rt" {
   vpc_id = aws_vpc.main.id
 }
 
 resource "aws_route" "nat" {
-  route_table_id         = aws_route_table.private.id
+  route_table_id         = aws_route_table.private-rt.id
   destination_cidr_block = "0.0.0.0/0"
   nat_gateway_id         = aws_nat_gateway.nat.id
 }
 
 // Associate app subnets to the private route table above
-resource "aws_route_table_association" "app" {
-  count = length(var.app_subnets)
+resource "aws_route_table_association" "private-app-rt-ass" {
+  count = length(var.private_subnets_app)
 
-  subnet_id      = aws_subnet.app[count.index].id
+  subnet_id      = aws_subnet.p[count.index].id
   route_table_id = aws_route_table.private.id
 }
 
@@ -124,3 +124,4 @@ resource "aws_route_table_association" "db" {
   subnet_id      = aws_subnet.db[count.index].id
   route_table_id = aws_route_table.db.id
 }
+
