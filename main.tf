@@ -15,14 +15,14 @@ resource "aws_vpc" "three-tier-vpc" {
 
 //PUBLIC SUBNET FOR WEB TIER
 // Create public subnets for web tier
-data "aws_availability_zones" "az-1" {}
+data "aws_availability_zones" "az" {}
 
 resource "aws_subnet" "public-subnet-web" {
   count = length(var.public_subnets_web_cidr)
 
   vpc_id                  = aws_vpc.three-tier-vpc.id
   cidr_block              = var.public_subnets_web_cidr[count.index]
-  availability_zone       = data.aws_availability_zones.az-1.names[count.index]
+  availability_zone       = data.aws_availability_zones.az.names[count.index]
   map_public_ip_on_launch = true
 
   tags = {
@@ -37,7 +37,7 @@ resource "aws_subnet" "private-subnet-app" {
 
   vpc_id            = aws_vpc.three-tier-vpc.id
   cidr_block        = var.private_subnets_app_cidr[count.index]
-  availability_zone = data.aws_availability_zones.available.names[count.index]
+  availability_zone = data.aws_availability_zones.az.names[count.index]
 
   tags = {
     Name = "private-sub-app${count.index + 1}"
@@ -51,7 +51,7 @@ resource "aws_subnet" "private-subnet-db" {
 
   vpc_id            = aws_vpc.three-tier-vpc.id
   cidr_block        = var.private_subnets_db_cidr[count.index]
-  availability_zone = data.aws_availability_zones.available.names[count.index]
+  availability_zone = data.aws_availability_zones.az.names[count.index]
 
   tags = {
     Name = "private-subnet-db${count.index + 1}"
@@ -78,7 +78,7 @@ resource "aws_eip" "nat-gw-eip" {
 //Create NAT gateway
 resource "aws_nat_gateway" "nat-gw" {
   allocation_id = aws_eip.nat-gw-eip.id
-  subnet_id     = aws_subnet.public[0].id
+  subnet_id     = aws_subnet.private-subnet-app[0].id
 
   depends_on = [
     aws_internet_gateway.three-tier-vpc-igw
@@ -91,6 +91,10 @@ resource "aws_nat_gateway" "nat-gw" {
 // Create secondary route table
 resource "aws_route_table" "secondary-rt" {
   vpc_id = aws_vpc.three-tier-vpc.id
+
+  tags = {
+    Name = "secondary-rt"
+  }
 }
 
 // Add internet gateway route to the secondary route table
@@ -112,6 +116,10 @@ resource "aws_route_table_association" "web-private_subnets_app_cidr-ass" {
 // Create main route table
 resource "aws_route_table" "main-rt" {
   vpc_id = aws_vpc.three-tier-vpc.id
+
+  tags = {
+    Name = "main-rt"
+  }
 }
 
 // Add nat gateway route to the main route table
